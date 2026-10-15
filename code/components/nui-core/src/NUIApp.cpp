@@ -274,7 +274,10 @@ void NUIApp::OnBeforeCommandLineProcessing(const CefString& process_type, CefRef
 						   // https://developer.mozilla.org/en-US/docs/Web/API/PressureObserver
 		"CpuPerformanceProbe," // Causes CEF to give misleading errors.
 		                       // PressureObserver depends on this so that has to be disabled as well.
-		"ThirdPartyStoragePartitioning" // This breaks migration of NUI localStorage and similar from M103
+		"ThirdPartyStoragePartitioning," // This breaks migration of NUI localStorage and similar from M103
+		"PeriodicBackgroundSync" // Querying this permission spins up the web app provider, which crashes in CEF.
+		                         // NUI pages can't be installed as web apps, so this has no use either.
+		                         // See https://github.com/citizenfx/fivem/issues/4194
 	);
 
 
