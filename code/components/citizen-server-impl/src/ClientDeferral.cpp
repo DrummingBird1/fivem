@@ -247,6 +247,13 @@ TCallbackMap ClientDeferral::GetCallbacks()
 
 		if (obj.size() == 1)
 		{
+			// a non-string message (e.g. an undefined variable) would throw while converting and take down the server
+			if (obj[0].type != msgpack::type::STR)
+			{
+				trace("^3Resource %s called deferrals.update with a non-string message, ignoring.^7\n", deferralKey);
+				return;
+			}
+
 			deferralState.message = obj[0].as<std::string>();
 
 			self->UpdateDeferrals();
