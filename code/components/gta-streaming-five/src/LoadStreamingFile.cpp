@@ -1625,6 +1625,20 @@ static LONG FilterUnmountOperation(CDataFileMgr::DataFile& entry)
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
+static bool UnloadDataFileGuarded(CDataFileMountInterface* mounter, CDataFileMgr::DataFile& entry)
+{
+	__try
+	{
+		mounter->UnloadDataFile(&entry);
+
+		return true;
+	}
+	__except (FilterUnmountOperation(entry))
+	{
+		return false;
+	}
+}
+
 namespace streaming
 {
 	void DLL_EXPORT AddMetaToLoadList(bool before, const std::string& meta)
@@ -2313,8 +2327,9 @@ void LoadManifest(const char* tagName)
 
 				CDataFileMgr::DataFile entry = { 0 };
 				strcpy_s(entry.name, name.c_str());
+				entry.type = DataFileType::DLC_ITYP_REQUEST;
 
-				mounter->UnloadDataFile(&entry);
+				UnloadDataFileGuarded(mounter, entry);
 			}
 		}
 
@@ -2357,8 +2372,9 @@ void LoadManifest(const char* tagName)
 
 					CDataFileMgr::DataFile entry = { 0 };
 					strcpy_s(entry.name, name.c_str());
+					entry.type = DataFileType::DLC_ITYP_REQUEST;
 
-					mounter->UnloadDataFile(&entry);
+					UnloadDataFileGuarded(mounter, entry);
 				}
 			}
 		}
