@@ -87,7 +87,20 @@ bool UvTcpServer::Listen(std::shared_ptr<uvw::TCPHandle>&& server)
 		OnConnection(event.code());
 	});
 
+	// listen errors (e.g. EADDRINUSE) are published synchronously, so catch them to report failure to the caller
+	bool listenFailed = false;
+	auto listenErrorConn = m_server->on<uvw::ErrorEvent>([&listenFailed](const uvw::ErrorEvent& event, uvw::TCPHandle& handle)
+	{
+		listenFailed = true;
+	});
+
 	m_server->listen();
+	m_server->erase(listenErrorConn);
+
+	if (listenFailed)
+	{
+		return false;
+	}
 
 	auto pipe = m_server->loop().resource<uvw::PipeHandle>();
 	pipe->bind(m_pipeName);

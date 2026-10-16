@@ -43,8 +43,25 @@ fwRefContainer<TcpServer> TcpServerManager::CreateServer(const PeerAddress& bind
 		// allocate an owning pointer for the server handle
 		auto serverHandle = m_uvLoop->Get()->resource<uvw::TCPHandle>();
 
+		// bind errors are published synchronously; without a check, listening would silently fall back to an ephemeral port
+		bool bindFailed = false;
+		auto bindErrorConn = serverHandle->on<uvw::ErrorEvent>([&bindFailed](const uvw::ErrorEvent& event, uvw::TCPHandle& handle)
+		{
+			trace("Binding socket failed - libuv error %s.\n", event.name());
+			bindFailed = true;
+		});
+
 		// set the socket binding to the peer address
 		serverHandle->bind(*bindAddress.GetSocketAddress());
+		serverHandle->erase(bindErrorConn);
+
+		if (bindFailed)
+		{
+			serverHandle->close();
+
+			trace("net-tcp-server failed to create server: couldn't bind\n");
+			return;
+		}
 
 		// attempt listening on the socket
 		if (tcpServer->Listen(std::move(serverHandle)))
