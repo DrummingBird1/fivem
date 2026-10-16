@@ -64,6 +64,46 @@ namespace fx
 		std::unique_ptr<uv_fs_t> req;
 	};
 
+	// checks an If-None-Match header value (a list of entity tags or `*`) against a strong ETag
+	static bool MatchesIfNoneMatch(std::string_view header, std::string_view etag)
+	{
+		while (!header.empty())
+		{
+			auto end = header.find(',');
+			auto tag = header.substr(0, end);
+
+			while (!tag.empty() && (tag.front() == ' ' || tag.front() == '\t'))
+			{
+				tag.remove_prefix(1);
+			}
+
+			while (!tag.empty() && (tag.back() == ' ' || tag.back() == '\t'))
+			{
+				tag.remove_suffix(1);
+			}
+
+			// weak comparison is used for If-None-Match
+			if (tag.substr(0, 2) == "W/")
+			{
+				tag.remove_prefix(2);
+			}
+
+			if (tag == "*" || tag == etag)
+			{
+				return true;
+			}
+
+			if (end == std::string_view::npos)
+			{
+				break;
+			}
+
+			header.remove_prefix(end + 1);
+		}
+
+		return false;
+	}
+
 	static auto GetFilesEndpointHandler(fx::ServerInstanceBase* instance)
 	{
 		auto clientRegistry = instance->GetComponent<fx::ClientRegistry>();
@@ -100,8 +140,13 @@ namespace fx
 			auto filePairs = filesComponent->GetFileHashPairs();
 
 			std::string fn = instance->GetRootPath() + "/cache/files/" + resourceName + "/" + fileName;
+			std::string fileHash;
 
-			if (filePairs.find(fileName) == filePairs.end())
+			if (auto fit = filePairs.find(fileName); fit != filePairs.end())
+			{
+				fileHash = fit->second;
+			}
+			else
 			{
 				// is it a stream file, instead?
 				auto streamComponent = resource->GetComponent<fx::ResourceStreamComponent>();
@@ -124,6 +169,8 @@ namespace fx
 				{
 					fn = sit->second.onDiskPath;
 				}
+
+				fileHash = sit->second.hashString;
 			}
 
 			auto filter = filesComponent->CreateFilesFilter(fileName, request);
@@ -136,6 +183,20 @@ namespace fx
 				response->End(fmt::sprintf("Filter failed: %s.", reason));
 				return;
 			}
+
+			// expose the content hash as a validator so caching proxies/CDNs revalidate instead of serving stale files
+			// filtered responses may differ per request, so they don't get one
+			std::string etag;
+
+			if (!filter && !fileHash.empty())
+			{
+				etag = "\"" + fileHash + "\"";
+
+				response->SetHeader("etag", etag);
+				response->SetHeader("cache-control", "no-cache");
+			}
+
+			const bool notModified = !etag.empty() && MatchesIfNoneMatch(request->GetHeader("if-none-match"), etag);
 
 			// get the TCP manager for a libuv loop
 			fwRefContainer<net::TcpServerManager> tcpManager = instance->GetComponent<net::TcpServerManager>();
@@ -172,6 +233,17 @@ namespace fx
 
 				// free the request
 				uv_fs_req_cleanup(fsReq);
+
+				// the requester already has this exact file
+				if (notModified)
+				{
+					response->SetHeader("content-length", std::to_string(size));
+					response->SetHeader("transfer-encoding", "identity");
+
+					response->WriteHead(304);
+					response->End();
+					return;
+				}
 
 				// open the file
 				uv_fs_open(uvLoop, req.get(), fn.c_str(), O_RDONLY, 0644, UvCallbackWrap<uv_fs_t>(req.get(), [=](uv_fs_t* fsReq)
